@@ -1,3 +1,4 @@
+import itertools
 from dataclasses import dataclass
 from typing import List
 
@@ -8,18 +9,34 @@ from models.mobilenetv1 import MobileNetV1
 
 
 class ExperimentProvider:
-    def __init__(self, name: str, model: torch.nn.Module, data: torch.Tensor, device: torch.device):
+    def __init__(self, name: str, model: torch.nn.Module, data: torch.Tensor):
         self._name = name
-        self._model = model.to(device)
-        self._data = data.to(device)
-        self._device = device
+        self._model = model
+        self._data = data
 
         self._loss = torch.nn.CrossEntropyLoss()
-        self._dummy_labels = torch.zeros((data.shape[0],), device=device, dtype=torch.long)
+        self._dummy_labels = torch.zeros((data.shape[0],), dtype=torch.long)
 
     @property
     def name(self) -> str:
         return self._name
+
+    @property
+    def data(self) -> torch.Tensor:
+        return self._data
+
+    @data.setter
+    def data(self, data: torch.Tensor):
+        self._data = data
+        self._dummy_labels = self._dummy_labels.to(data.device)
+
+    @property
+    def model(self) -> torch.nn.Module:
+        return self._model
+
+    @model.setter
+    def model(self, model: torch.nn.Module):
+        self._model = model
 
     def step_once(self) -> None:
         self._model(self._data)
@@ -57,23 +74,33 @@ def benchmark(experiment: ExperimentProvider, steps: int) -> BenchmarkResult:
                            _mean_time(start_time_train, end_time_train, steps))
 
 
+class Runner:
+    def __init__(self, device: str):
+        self._device = device
+
+    def run_experiments(self, experiments: List[ExperimentProvider]):
+        for e in experiments:
+            e.model = e.model.to(self._device)
+            e.data = e.data.to(self._device)
+            result = benchmark(e, steps)
+            print(f"{result.name}: {result.forward_step:.4f} {result.train_step:.4f}")
+
+
 if __name__ == '__main__':
     steps = 10
     input_size = 224
     data = torch.randn((32, 3, input_size, input_size))
 
-    models = [
-        ExperimentProvider("MobileNet(1.0), cpu", MobileNetV1(3, 1000, 1.0), data,
-                           torch.device("cpu")),
-        ExperimentProvider("MobileNet(1.0), gpu", MobileNetV1(3, 1000, 1.0), data,
-                           torch.device("cuda")),
+    cpu_runner = Runner("cpu")
+    gpu_runner = Runner("cuda")
 
-        ExperimentProvider("MobileNet(0.5), cpu", MobileNetV1(3, 1000, 0.5), data,
-                           torch.device("cpu")),
-        ExperimentProvider("MobileNet(0.5), gpu", MobileNetV1(3, 1000, 0.5), data,
-                           torch.device("cuda")),
+    experiments = [
+        ExperimentProvider("MobileNet(1.0)", MobileNetV1(3, 1000, 1.0), data),
+        ExperimentProvider("MobileNet(0.5)", MobileNetV1(3, 1000, 0.5), data)
     ]
 
-    for m in models:
-        result = benchmark(m, steps)
-        print(f"{result.name}: {result.forward_step:.4f} {result.train_step:.4f}")
+    gpu_runner.run_experiments(experiments)
+
+
+
+
