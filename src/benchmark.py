@@ -5,7 +5,7 @@ from typing import List
 import time
 import torch
 
-from models import MobileNetV1, MobileNetV2
+from models import MobileNetV1, MobileNetV2, mobilenet_v3_small, mobilenet_v3_large
 
 
 class ExperimentProvider:
@@ -87,7 +87,7 @@ class Runner:
 
 
 if __name__ == '__main__':
-    steps = 5
+    steps = 3
     input_size = 224
     data = torch.randn((32, 3, input_size, input_size))
 
@@ -98,10 +98,12 @@ if __name__ == '__main__':
         ExperimentProvider("MobileNet(1.0)", MobileNetV1(3, 1000, 1.0), data),
         ExperimentProvider("MobileNet(0.5)", MobileNetV1(3, 1000, 0.5), data),
         ExperimentProvider("MobileNetV2(1.0)", MobileNetV2(width_mult=1.0), data),
-        ExperimentProvider("MobileNetv2(0.5)", MobileNetV2(width_mult=0.5), data)
+        ExperimentProvider("MobileNetV2(0.5)", MobileNetV2(width_mult=0.5), data),
+        ExperimentProvider("MobileNetV3(Large)", mobilenet_v3_large(), data),
+        ExperimentProvider("MobileNetV3(Small)", mobilenet_v3_small(), data),
     ]
 
-    gpu_runner.run_experiments(experiments)
+    cpu_runner.run_experiments(experiments)
 
 
 
