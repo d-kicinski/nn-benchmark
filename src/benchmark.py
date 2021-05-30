@@ -6,6 +6,7 @@ import time
 import torch
 
 from models import MobileNetV1, MobileNetV2, mobilenet_v3_small, mobilenet_v3_large
+from models import resnet18, resnet34, resnet50
 
 
 class ExperimentProvider:
@@ -96,15 +97,18 @@ if __name__ == '__main__':
 
     experiments = [
         ExperimentProvider("MobileNet(1.0)", MobileNetV1(3, 1000, 1.0), data),
+        ExperimentProvider("MobileNet(0.75)", MobileNetV1(3, 1000, 0.75), data),
         ExperimentProvider("MobileNet(0.5)", MobileNetV1(3, 1000, 0.5), data),
         ExperimentProvider("MobileNetV2(1.0)", MobileNetV2(width_mult=1.0), data),
         ExperimentProvider("MobileNetV2(0.5)", MobileNetV2(width_mult=0.5), data),
         ExperimentProvider("MobileNetV3(Large)", mobilenet_v3_large(), data),
         ExperimentProvider("MobileNetV3(Small)", mobilenet_v3_small(), data),
+        ExperimentProvider("ResNet18", resnet18(), data),
+        ExperimentProvider("ResNet34", resnet34(), data),
+        ExperimentProvider("ResNet50", resnet50(), data),
     ]
-
+    print("CUDA training")
+    gpu_runner.run_experiments(experiments)
+    print()
+    print("CPU training")
     cpu_runner.run_experiments(experiments)
-
-
-
-
