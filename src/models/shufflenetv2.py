@@ -1,0 +1,1 @@
+from torchvision.models import shufflenet_v2_x0_5, shufflenet_v2_x1_0
