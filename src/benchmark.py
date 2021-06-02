@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import platform
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -88,17 +89,14 @@ def _throughput(start, end, steps):
 
 def benchmark(experiment: ExperimentProvider, steps: int) -> BenchmarkResult:
     start_time_step = time.time()
-    for i in range(steps):
+    for _ in range(steps):
         experiment.step_once()
     end_time_step = time.time()
 
     start_time_train = time.time()
-    for i in range(steps):
+    for _ in range(steps):
         experiment.train_step_once()
     end_time_train = time.time()
-
-    # start_time_train = 0
-    # end_time_train = 1
 
     return BenchmarkResult(experiment.name,
                            experiment.data.eval.shape[2],
@@ -107,10 +105,11 @@ def benchmark(experiment: ExperimentProvider, steps: int) -> BenchmarkResult:
 
 
 class Runner:
-    RUN_DELAY_SECONDS = 10.0
+    RUN_DELAY_SECONDS = 3.0
 
-    def __init__(self, device: str):
+    def __init__(self, device: str, steps: int = 10):
         self._device = device
+        self._steps = steps
 
     def run_experiments(self, experiments: List[ExperimentProvider], verbose: bool = True) \
             -> List[BenchmarkResult]:
@@ -120,7 +119,7 @@ class Runner:
             e.assign_device(self._device)
             e.train_step_once()  # dry run for sanity-check
             time.sleep(Runner.RUN_DELAY_SECONDS)
-            r = benchmark(e, steps)
+            r = benchmark(e, self._steps)
             e.clear()
             results.append(r)
             if verbose:
@@ -128,7 +127,7 @@ class Runner:
         return results
 
 
-def update_stats_(stats: Dict[str, Dict[int, float]], results: List[BenchmarkResult]):
+def update_stats_(stats: Dict[str, Dict[str, Dict[int, float]]], results: List[BenchmarkResult]):
     for r in results:
         stats[r.name]["forward"][r.input_size] = r.forward_step
         stats[r.name]["backward"][r.input_size] = r.train_step
@@ -144,25 +143,25 @@ class Data:
         self.train = self.train.to(device)
 
 
-if __name__ == '__main__':
+def run_benchmark():
     steps = 10
     batch_size = 8
     sizes = [64, 124, 160, 224]
 
-    datas = [
+    dataset = [
         Data(
             eval=torch.randn((1, 3, input_size, input_size)),
             train=torch.randn((batch_size, 3, input_size, input_size))
         ) for input_size in sizes
     ]
 
-    cpu_runner = Runner("cpu")
-    gpu_runner = Runner("cuda")
+    cpu_runner = Runner("cpu", steps)
+    gpu_runner = Runner("cuda", steps)
 
     cpu_stats = defaultdict(lambda: defaultdict(dict))
     gpu_stats = defaultdict(lambda: defaultdict(dict))
 
-    for data, size in zip(datas, sizes):
+    for data, size in zip(dataset, sizes):
         print(f"=== {size} ===")
         experiments = [
             ExperimentProvider(LazyModel("MobileNetV1(1.0)"), data),
@@ -189,9 +188,13 @@ if __name__ == '__main__':
         update_stats_(cpu_stats, results)
         print()
 
-    with Path("../results/benchmark_cpu.json").open("w") as fp:
+    with Path(f"../results/benchmark_cpu_{platform.machine()}.json").open("w") as fp:
         json.dump(cpu_stats, fp, indent=4)
 
     if torch.cuda.is_available():
         with Path("../results/benchmark_gpu.json").open("w") as fp:
             json.dump(gpu_stats, fp, indent=4)
+
+
+if __name__ == '__main__':
+    run_benchmark()
