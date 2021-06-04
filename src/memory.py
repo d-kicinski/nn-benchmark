@@ -47,9 +47,8 @@ def memory_table(memory_stats: Dict[str, ModelStatistics]) -> MarkdownTableWrite
     )
 
 
-def write_table(image_size: int):
-    writer = memory_table(get_memory_stats(image_size))
-    writer.write_table()
+def write_table(image_size: int) -> str:
+    return memory_table(get_memory_stats(image_size)).dumps()
 
 
 if __name__ == '__main__':
