@@ -50,10 +50,6 @@ class Runtime:
     def model(self, model: torch.nn.Module):
         self._model = model
 
-    @property
-    def unsupported(self) -> List[str]:
-        return []
-
     def initialize_model(self):
         if self._model is None:
             self._model = self._lazy_model()
@@ -80,6 +76,10 @@ class Runtime:
         loss = self._loss(out, self._dummy_labels)
         loss.backward()
 
+    @staticmethod
+    def unsupported() -> List[str]:
+        return []
+
 
 class OnnxRuntime(Runtime):
     def __init__(self, lazy_model: LazyModel, data: Data):
@@ -87,10 +87,6 @@ class OnnxRuntime(Runtime):
 
         self._ort_session: Optional[ort.InferenceSession] = None
         self._dummy_input = self._data.eval.numpy()
-
-    @property
-    def unsupported(self) -> List[str]:
-        return ["MobileNetV3(Large)", "MobileNetV3(Small)"]
 
     def initialize_model(self):
         if self._ort_session is None:
@@ -111,6 +107,11 @@ class OnnxRuntime(Runtime):
     def train_step_once(self) -> None:
         # ONNX doesn't yet support model training
         pass
+
+    @staticmethod
+    def unsupported() -> List[str]:
+        return ["MobileNetV3(Large)", "MobileNetV3(Small)"]
+
 
 
 class JITRuntime(Runtime):
@@ -214,7 +215,7 @@ def run_benchmark():
     steps = 10
     batch_size = 8
     sizes = [64, 124, 160, 224]
-    runtime = "jit"
+    runtime = "default"
 
     if runtime == "onnx":
         runtime_cls = OnnxRuntime
@@ -224,6 +225,8 @@ def run_benchmark():
         runtime_cls = Runtime
 
     model_list = [
+        "MNASNet(0.5)",
+        "MNASNet(1.0)",
         "MobileNetV1(1.0)",
         "MobileNetV1(0.5)",
         "MobileNetV2(1.0)",
@@ -253,7 +256,7 @@ def run_benchmark():
     for data, size in zip(dataset, sizes):
         print(f"=== {size} ===")
         experiments = [runtime_cls(LazyModel(m), data) for m in model_list
-                       if m not in runtime_cls.unsupported]
+                       if m not in runtime_cls.unsupported()]
 
         if torch.cuda.is_available():
             print("Running on CUDA")
@@ -271,7 +274,7 @@ def run_benchmark():
         json.dump(cpu_stats, fp, indent=4)
 
     if torch.cuda.is_available():
-        with Path("../results/benchmark_gpu.json").open("w") as fp:
+        with Path(f"../results/benchmark_gpu_{runtime}_{platform.machine()}.json").open("w") as fp:
             json.dump(gpu_stats, fp, indent=4)
 
 

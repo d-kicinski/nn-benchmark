@@ -5,6 +5,7 @@ from .mobilenetv2 import *
 from .mobilenetv3 import *
 from .resnet import *
 from .shufflenetv2 import *
+from .mnasnet import *
 
 
 class LazyModel:
@@ -41,5 +42,9 @@ class LazyModel:
             return resnet34()
         elif self._name == "ResNet50":
             return resnet50()
+        elif self._name == "MNASNet(1.0)":
+            return mnasnet1_0()
+        elif self._name == "MNASNet(0.5)":
+            return mnasnet0_5()
         else:
             raise ValueError(f"Model {self._name} is unknown!")
