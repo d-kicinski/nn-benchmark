@@ -9,13 +9,15 @@ from typing import List, Dict, Optional
 
 import time
 import torch
+import torch.utils.mobile_optimizer as mobile_optimizer
+import onnxruntime as ort
 
 from models import LazyModel
 
-torch.set_num_threads(1)
+torch.set_num_threads(4)
 
 
-class ExperimentProvider:
+class Runtime:
     def __init__(self, lazy_model: LazyModel, data: Data):
         self._lazy_model = lazy_model
         self._data = data
@@ -48,6 +50,10 @@ class ExperimentProvider:
     def model(self, model: torch.nn.Module):
         self._model = model
 
+    @property
+    def unsupported(self) -> List[str]:
+        return []
+
     def initialize_model(self):
         if self._model is None:
             self._model = self._lazy_model()
@@ -75,6 +81,65 @@ class ExperimentProvider:
         loss.backward()
 
 
+class OnnxRuntime(Runtime):
+    def __init__(self, lazy_model: LazyModel, data: Data):
+        super().__init__(lazy_model, data)
+
+        self._ort_session: Optional[ort.InferenceSession] = None
+        self._dummy_input = self._data.eval.numpy()
+
+    @property
+    def unsupported(self) -> List[str]:
+        return ["MobileNetV3(Large)", "MobileNetV3(Small)"]
+
+    def initialize_model(self):
+        if self._ort_session is None:
+            self._model = self._lazy_model()
+            Path("onnx").mkdir(exist_ok=True, parents=True)
+            torch.onnx.export(self._model, self._data.eval, f"onnx/{self.name}.onnx",
+                              input_names=["input"], output_names=["output"])
+            self._ort_session = ort.InferenceSession(f"onnx/{self.name}.onnx")
+
+    def clear(self):
+        super(OnnxRuntime, self).clear()
+        del self._ort_session
+        self._ort_session = None
+
+    def step_once(self) -> None:
+        self._ort_session.run(None, {"input": self._dummy_input})
+
+    def train_step_once(self) -> None:
+        # ONNX doesn't yet support model training
+        pass
+
+
+class JITRuntime(Runtime):
+    def __init__(self, lazy_model: LazyModel, data: Data):
+        super().__init__(lazy_model, data)
+        self._torchscript_model: Optional[torch.jit.ScriptModule] = None
+
+    def initialize_model(self):
+        if self._torchscript_model is None:
+            self._model = self._lazy_model()
+            Path("jit").mkdir(exist_ok=True, parents=True)
+            self._torchscript_model = torch.jit.trace(self._model, self.data.eval,
+                                                      check_trace=False)
+            self._torchscript_model = mobile_optimizer.optimize_for_mobile(self._torchscript_model)
+            self._torchscript_model.save(f"jit/{self.name}.pt")
+
+    def clear(self):
+        super(JITRuntime, self).clear()
+        del self._torchscript_model
+        self._torchscript_model = None
+
+    def step_once(self) -> None:
+        self._torchscript_model(self.data.eval)
+
+    def train_step_once(self) -> None:
+        # JIT doesn't yet support model training (TODO: Make sure of it)
+        pass
+
+
 @dataclass
 class BenchmarkResult:
     name: str
@@ -87,7 +152,7 @@ def _throughput(start, end, steps):
     return 1 / (1e-7 + ((end - start) / steps))
 
 
-def benchmark(experiment: ExperimentProvider, steps: int) -> BenchmarkResult:
+def benchmark(experiment: Runtime, steps: int) -> BenchmarkResult:
     start_time_step = time.time()
     for _ in range(steps):
         experiment.step_once()
@@ -106,12 +171,14 @@ def benchmark(experiment: ExperimentProvider, steps: int) -> BenchmarkResult:
 
 class Runner:
     RUN_DELAY_SECONDS = 3.0
+    TEMP_DIR = "onnx"
 
-    def __init__(self, device: str, steps: int = 10):
+    def __init__(self, device: str, onnx: bool = False, steps: int = 10):
         self._device = device
         self._steps = steps
+        self._onnx = onnx
 
-    def run_experiments(self, experiments: List[ExperimentProvider], verbose: bool = True) \
+    def run_experiments(self, experiments: List[Runtime], verbose: bool = True) \
             -> List[BenchmarkResult]:
         results: List[BenchmarkResult] = []
         for e in experiments:
@@ -147,6 +214,28 @@ def run_benchmark():
     steps = 10
     batch_size = 8
     sizes = [64, 124, 160, 224]
+    runtime = "jit"
+
+    if runtime == "onnx":
+        runtime_cls = OnnxRuntime
+    elif runtime == "jit":
+        runtime_cls = JITRuntime
+    else:
+        runtime_cls = Runtime
+
+    model_list = [
+        "MobileNetV1(1.0)",
+        "MobileNetV1(0.5)",
+        "MobileNetV2(1.0)",
+        "MobileNetV2(0.5)",
+        "MobileNetV3(Large)",
+        "MobileNetV3(Small)",
+        "ShuffleNetV2(1.0)",
+        "ShuffleNetV2(0.5)",
+        "ResNet18",
+        "ResNet34",
+        "ResNet50",
+    ]
 
     dataset = [
         Data(
@@ -163,19 +252,8 @@ def run_benchmark():
 
     for data, size in zip(dataset, sizes):
         print(f"=== {size} ===")
-        experiments = [
-            ExperimentProvider(LazyModel("MobileNetV1(1.0)"), data),
-            ExperimentProvider(LazyModel("MobileNetV1(0.5)"), data),
-            ExperimentProvider(LazyModel("MobileNetV2(1.0)"), data),
-            ExperimentProvider(LazyModel("MobileNetV2(0.5)"), data),
-            ExperimentProvider(LazyModel("MobileNetV3(Large)"), data),
-            ExperimentProvider(LazyModel("MobileNetV3(Small)"), data),
-            ExperimentProvider(LazyModel("ShuffleNetV2(1.0)"), data),
-            ExperimentProvider(LazyModel("ShuffleNetV2(0.5)"), data),
-            ExperimentProvider(LazyModel("ResNet18"), data),
-            ExperimentProvider(LazyModel("ResNet34"), data),
-            ExperimentProvider(LazyModel("ResNet50"), data),
-        ]
+        experiments = [runtime_cls(LazyModel(m), data) for m in model_list
+                       if m not in runtime_cls.unsupported]
 
         if torch.cuda.is_available():
             print("Running on CUDA")
@@ -188,7 +266,8 @@ def run_benchmark():
         update_stats_(cpu_stats, results)
         print()
 
-    with Path(f"../results/benchmark_cpu_{platform.machine()}.json").open("w") as fp:
+    Path(f"../results").mkdir(exist_ok=True, parents=True)
+    with Path(f"../results/benchmark_cpu_{runtime}_{platform.machine()}.json").open("w") as fp:
         json.dump(cpu_stats, fp, indent=4)
 
     if torch.cuda.is_available():
