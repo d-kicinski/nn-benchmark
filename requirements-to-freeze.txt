@@ -1,5 +1,6 @@
 # facenet-pytorch
 # torch
 # torchvision
-torchsummary
+onnxruntime
+torchinfo
 matplotlib
