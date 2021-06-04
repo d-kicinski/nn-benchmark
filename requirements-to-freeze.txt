@@ -1,6 +1,7 @@
 # facenet-pytorch
 # torch
 # torchvision
+pytablewriter
 onnxruntime
 torchinfo
 matplotlib
